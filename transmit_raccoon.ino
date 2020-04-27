@@ -20,15 +20,21 @@
 #define tmp   A7  // input from thermistor
 #define ldr   A6
 #define volt  A5
+#define moisture A4
+
 const int motion = 9;     // the number of the pushbutton pin
 const int  mosfet =  10;      // the number of the LED pin
-const int thresh = 800;
+
+const int sendtime = 1000;
+const int thresh = 30;
 unsigned long previousMillis = 0;        // will store last time LED was updated
 bool resetcount = false;
 // constants won't change:
 const long interval = 30;           // interval at which to blink (milliseconds)
 int ledState = LOW;
 int track  = 0;
+bool trigger = false;
+
 
 //hardware configuring
 RF24 radio(CE_PIN, CSN_PIN);
@@ -42,6 +48,9 @@ struct myData {
   int motion_count;
   int ldr_sense;
   int voltage;
+  int moisture_level;
+  bool light;
+  bool trigger;
 } myData;
 
 
@@ -55,7 +64,7 @@ void setup()
   radio.setChannel(108);
   radio.setDataRate(RF24_250KBPS); // speed
 
-  radio.setPALevel(RF24_PA_LOW);//low range-->power usuage:low
+  radio.setPALevel(RF24_PA_MAX);//HIGH range-->power usuage:HIGH
 
   // opens the pipes for connections
   radio.openWritingPipe(addresses[0]);
@@ -67,19 +76,19 @@ void loop()
   radio.stopListening();                                   //stops listening
   myData.temp = analogRead(tmp);
   myData.ldr_sense = analogRead(ldr);
-  myData.voltage= analogRead(volt);
+  myData.voltage = analogRead(volt);
   myData._micros = micros();  // Send back for timing
+  myData.moisture_level = analogRead(moisture);
   unsigned long currentMillis = millis();
-  if (digitalRead(motion) == 1 && myData.ldr_sense < thresh) {
-   if(!resetcount){
-    count++;
-    resetcount = true;
-   }
-   myData.motion_count = count; 
-
+  trigger = digitalRead(motion);
+  if (trigger && map(myData.ldr_sense, 750, 1023, 0, 100) < thresh) {
+    if (!resetcount) {
+      resetcount = true;
+      count++;
+    }
     if (currentMillis - previousMillis >= interval) {
       // save the last time you blinked the LED
-      track +=interval;
+      track += interval;
       previousMillis = currentMillis;
 
       // if the LED is off turn it on and vice-versa:
@@ -100,21 +109,44 @@ void loop()
   }
 
   myData.motion_count = count;
-  if (currentMillis - previousMillis >= 1000 || track >=1000) {
-    if(track>=1000){
+  if (currentMillis - previousMillis >= sendtime || track >= sendtime) {
+    if (track >= sendtime) {
       track = 0;
-      }
+    }
     // save the last time you blinked the LED
+    if (trigger) {
+      Serial.println("Triggered");
+      myData.trigger = true;
+    } else {
+      Serial.println("Not Triggered");
+       myData.trigger = false;
+    }
+    if(trigger && map(myData.ldr_sense, 750, 1023, 0, 100) < thresh){
+        Serial.println("Light ON");
+        myData.light = true;
+      }else{
+        Serial.println("Light OFF");
+        myData.light = false;
+      }
     previousMillis = currentMillis;
+    Serial.print("Number of Encounters: ");
     Serial.println(myData.motion_count);
+    Serial.print("Current Temperature: ");
     Serial.print((int)((((myData.temp * 5.0) / 1024.0) - 0.5) * 100));
     Serial.println(" Celsius");
-    Serial.print((myData.voltage/1023.0)*5.0);
+    Serial.print("Battery Voltage: ");
+    Serial.print((myData.voltage / 1023.0) * 5.0);
     Serial.println("V");
-    Serial.println(myData.ldr_sense);
+    Serial.print("Daylight Level: ");
+    Serial.print(map(myData.ldr_sense, 750, 1023, 0, 100));
+    Serial.println("%");
+    Serial.print("Moisture Level: ");
+    Serial.print(map(myData.moisture_level, 0, 1023, 0, 100));
+    Serial.println("%");
     if (!radio.write( &myData, sizeof(myData) )) {           //continous data sending to prevent lag
       Serial.println(F("Transmit failed "));
     }
+    Serial.println();
   }
 
 }
