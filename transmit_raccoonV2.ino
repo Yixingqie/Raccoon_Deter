@@ -8,8 +8,8 @@
    7 - MISO to Arduino pin 12
    8 - UNUSED
 */
-
 //include the following libraries
+#include "LowPower.h"
 #include <SPI.h>
 #include "RF24.h"
 #include "printf.h"
@@ -26,10 +26,10 @@ const int motion = 9;     // motion sensor
 const int  mosfet =  10;      // light
 const int lower_bound = 21;
 
-const unsigned long sendtime = 60000L;
+const unsigned long sendtime = 1800000L; //30 mins
 //const int sends = 1200;
-const unsigned long sense_time = 5000;
-const int thresh = 40;
+const unsigned long sense_time = 5000; // 2 seconds
+const int thresh = 10;
 unsigned long previousMillis = 0;        // will store last time LED was updated
 bool resetcount = false;
 // constants won't change:
@@ -38,6 +38,7 @@ int ledState = LOW;
 int track  = 0;
 bool trigger = false;
 bool ignore = false;
+int count_send = 0;
 //int end_of_day_counter  = 0;
 
 unsigned long previous = 0;        // will store last time LED was updated
@@ -59,12 +60,15 @@ struct myData {
   int moisture_level;
   bool light;
   bool trigger;
+  int send_count;
 } myData;
 
 
 void setup()
 {
-  Serial.begin(115200);  //sets up serial monitor
+  myData.send_count = count_send;
+  myData.motion_count = count;
+  // Serial.begin(115200);  //sets up serial monitor
   pinMode(motion, INPUT);
   // initialize the pushbutton pin as an input:
   pinMode(mosfet, OUTPUT);
@@ -137,70 +141,46 @@ void loop()
   }
 
   myData.motion_count = count;
+  if (count_send > 36) {
+    count_send = 0;
+    myData.send_count  = count_send;
+  }
 
-//  if (trigger && ((unsigned long)(currentMillis - previous_sense) >= sense_time)) {
-//
-//    previous_sense = currentMillis;
-//    if (!radio.write( &myData, sizeof(myData) )) {           //continous data sending to prevent lag
-//      //    Serial.println(F("Transmit failed "));
-//    }
-//    Serial.println();
-//  }
-
-  if ((unsigned long)(currentMillis - previous) >= sendtime || (trigger && ((unsigned long)(currentMillis - previous_sense) >= sense_time))) {
-//    //  end_of_day_counter++;
-//    // save the last time you blinked the LED
-//    if (trigger) {
-//      //   Serial.println("Triggered");
-//      myData.trigger = true;
-//    } else {
-//      //   Serial.println("Not Triggered");
-//      myData.trigger = false;
-//    }
-//    if ((trigger && (map(myData.ldr_sense, lower_bound, 1023, 0, 100) < thresh)) || (ignore && trigger) ) {
-//      //   Serial.println("Light ON");
-//      myData.light = true;
-//      if (!resetcount) {
-//        resetcount = true;
-//        count++;
-//      }
-//    } else {
-//      resetcount = false;
-//      //   Serial.println("Light OFF");
-//      myData.light = false;
-//    }
-    previous_sense = currentMillis;
-    previous = currentMillis;
-//    if (count >= 15) {
-//      count = 0;
-//    }
-//
-//    myData.motion_count = count;
-//
-//    //    if (end_of_day_counter >= sends) {
-//    //      count  = 0;
-//    //      end_of_day_counter = 0;
-//    //    }
-//    //  Serial.print("Number of Encounters: ");
-//    //   Serial.println(myData.motion_count);
-//    /*
-//      Serial.print("Current Temperature: ");
-//      Serial.print((int)((((myData.temp * 5.0) / 1024.0) - 0.5) * 100));
-//      Serial.println(" Celsius");
-//      Serial.print("Battery Voltage: ");
-//      Serial.print((myData.voltage / 1023.0) * 5.0);
-//      Serial.println("V");
-//      Serial.print("Daylight Level: ");
-//      Serial.print(map(myData.ldr_sense, lower_bound, 1023, 0, 100));
-//      Serial.println("%");
-//      Serial.print("Moisture Level: ");
-//      Serial.print(map(myData.moisture_level, 0, 1023, 0, 100));
-//      Serial.println("%");
-//    */
+  if (count_send == 0) {
+    count_send++;
+    myData.send_count = count_send;
     if (!radio.write( &myData, sizeof(myData) )) {           //continous data sending to prevent lag
       //    Serial.println(F("Transmit failed "));
     }
+
     Serial.println();
+  }
+
+  if (!myData.light && (map(myData.ldr_sense, lower_bound, 1023, 0, 100) > thresh)) {
+    count_send++;
+    myData.send_count = count_send;
+    for (int i = 0; i < 225; i++) { //for 30 minutes
+      LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF); //put to sleep
+    }
+    if (!radio.write( &myData, sizeof(myData) )) {           //continous data sending to prevent lag
+      //    Serial.println(F("Transmit failed "));
+    }
+
+    // Serial.println();
+  } else if (!myData.light) {
+    LowPower.powerDown(SLEEP_500MS, ADC_OFF, BOD_OFF); //put to sleep
+  }
+
+  if (((map(myData.ldr_sense, lower_bound, 1023, 0, 100) < thresh) && ((unsigned long)(currentMillis - previous) >= sendtime)) || (myData.light &&((unsigned long)(currentMillis - previous_sense) >= sense_time))) {
+    
+    count_send++;
+    myData.send_count = count_send;
+    previous_sense = currentMillis;
+    previous = currentMillis;
+    if (!radio.write( &myData, sizeof(myData) )) {           //continous data sending to prevent lag
+      //    Serial.println(F("Transmit failed "));
+    }
+    //  Serial.println();
   }
 
 }
