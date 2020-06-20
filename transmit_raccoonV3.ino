@@ -26,10 +26,10 @@ const int motion = 9;     // motion sensor
 const int  mosfet =  10;      // light
 const int lower_bound = 21;
 
-const unsigned long sendtime = 36000L; //10 mins rate= 3.6S clock /60S real
-const unsigned long sense_time = 120; // 2 seconds
-const int thresh = 10;
-unsigned long previousMillis = 0;        // will store last time LED was updated
+const unsigned long sendtime = 180000L; //5 mins rate= 3.6S clock /60S real
+const unsigned long sense_time = 200; // 0.2 seconds
+const int thresh = 20;
+unsigned long previousMillis = 0L;        // will store last time LED was updated
 bool resetcount = false;
 // constants won't change:
 const long interval = 40;           // interval at which to blink (milliseconds)
@@ -38,17 +38,18 @@ int track  = 0;
 bool trigger = false;
 bool ignore = false;
 int count_send = 0;
+int count_stabilize = 0;
 
 
 unsigned long previous = 0;        // will store last time LED was updated
 unsigned long previous_sense = 0;
-
+bool triggered_before = false;
 
 //hardware configuring
 RF24 radio(CE_PIN, CSN_PIN);
 int count = 0;
 //set up connection pipes
-byte addresses[][6] = {"raccoon", "raccoon2"};
+byte addresses[][6] = {"rac", "rac2"};
 
 struct myData {
   unsigned long _micros;  // to save response times
@@ -71,7 +72,7 @@ void setup()
   pinMode(motion, INPUT);
   pinMode(mosfet, OUTPUT);
   radio.begin();          // Initialize the nRF24L01 Radio
-  radio.setChannel(108);
+  radio.setChannel(0);
   radio.setDataRate(RF24_250KBPS); // speed
 
   radio.setPALevel(RF24_PA_MAX);//HIGH range-->power usuage:HIGH
@@ -95,6 +96,7 @@ void loop()
   trigger = digitalRead(motion);
   if ((trigger && (map(myData.ldr_sense, lower_bound, 1023, 0, 100) < thresh)) || (ignore && trigger)) {
     ignore = true;
+    triggered_before  = true;
     if ((unsigned long)(currentMillis - previousMillis) >= interval) {
       // save the last time you blinked the LED
       previousMillis = currentMillis;
@@ -113,6 +115,13 @@ void loop()
   } else {
     digitalWrite(mosfet, LOW);
     ignore = false;
+    
+    if(triggered_before){
+    count_stabilize++;
+   }
+   if(count_stabilize >300){
+    triggered_before = false;
+   }
   }
 
 
@@ -135,12 +144,12 @@ void loop()
     //   Serial.println("Light OFF");
     myData.light = false;
   }
-  if (count >= 15) {
+  if (count >= 100) {
     count = 0;
   }
 
   myData.motion_count = count;
-  if (count_send >= 36) {
+  if (count_send >= 100) {
     count_send = 0;
     myData.send_count  = count_send;
   }
@@ -155,10 +164,10 @@ void loop()
     Serial.println();
   }
 
-  if (!myData.light && (map(myData.ldr_sense, lower_bound, 1023, 0, 100) > thresh)) {
+  if (!myData.light && !triggered_before && !ignore && (map(myData.ldr_sense, lower_bound, 1023, 0, 100) > thresh)) {
     count_send++;
     myData.send_count = count_send;
-    for (int i = 0; i < 75; i++) { //for 10 minutes
+    for (int i = 0; i < 7; i++) { //for 1 minutes
       LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF); //put to sleep
     }
     radio.write( &myData, sizeof(myData) );
@@ -167,8 +176,9 @@ void loop()
 
   } else if (!myData.light) {
     LowPower.powerDown(SLEEP_15MS, ADC_OFF, BOD_OFF); //put to sleep
+    
   }
-
+  
 
   unsigned long timeSense = (unsigned long)(currentMillis - previous_sense);
   if (myData.light && (timeSense >= sense_time)) {
